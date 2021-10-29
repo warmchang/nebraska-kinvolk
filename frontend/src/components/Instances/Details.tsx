@@ -36,7 +36,7 @@ import {
   makeLocaleTime,
   prepareErrorMessage,
 } from '../../utils/helpers';
-import ChannelItem from '../Channels/Item';
+import ChannelItem from '../Channels/ChannelItem';
 import { CardFeatureLabel, CardLabel } from '../Common/Card';
 import Empty from '../Common/EmptyContent';
 import ListHeader from '../Common/ListHeader';
