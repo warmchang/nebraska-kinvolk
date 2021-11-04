@@ -2,14 +2,13 @@ import { Box, Divider, Typography } from '@material-ui/core';
 import Grid from '@material-ui/core/Grid';
 import { makeStyles } from '@material-ui/core/styles';
 import ScheduleIcon from '@material-ui/icons/Schedule';
-import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Application } from '../../api/apiDataTypes';
+import { Group } from '../../api/apiDataTypes';
 import { applicationsStore } from '../../stores/Stores';
 import { CardFeatureLabel, CardHeader, CardLabel } from '../Common/Card';
 import ListItem from '../Common/ListItem';
 import MoreMenu from '../Common/MoreMenu';
-import GroupsList from './ApplicationItemGroupsList';
+import ApplicationItemGroupsList from './ApplicationItemGroupsList';
 
 const useStyles = makeStyles({
   root: {
@@ -20,49 +19,47 @@ const useStyles = makeStyles({
   },
 });
 
-function Item(props: {
-  application: Application;
-  handleUpdateApplication: (appID: string) => void;
-}) {
+export interface ApplicationItemProps {
+  onUpdate: (appID: string) => void;
+  description?: string;
+  groups: Group[];
+  numberOfInstances: number;
+  id: string;
+  productId: string;
+  name: string;
+}
+
+export default function ApplicationItem(props: ApplicationItemProps) {
   const classes = useStyles();
   const { t } = useTranslation();
-  const description = props.application.description || t('applications|No description provided');
-  const groups = props.application.groups || [];
-  const instances = props.application.instances?.count || t('applications|None');
-  const appID = props.application ? props.application.id : '';
-  const appProductID = props.application.product_id || '';
-
-  function updateApplication() {
-    props.handleUpdateApplication(props.application.id);
-  }
-
-  function deleteApplication() {
-    const confirmationText = t('applications|Are you sure you want to delete this application?');
-    if (window.confirm(confirmationText)) {
-      applicationsStore().deleteApplication(props.application.id);
-    }
-  }
+  const { description, groups, numberOfInstances, id, productId, name } = props;
 
   return (
     <ListItem className={classes.root}>
       <Grid container>
         <Grid item xs={12}>
           <CardHeader
-            cardMainLinkLabel={props.application.name}
-            cardMainLinkPath={{ pathname: `/apps/${appID}` }}
-            cardId={appID}
-            cardTrack={appProductID}
-            cardDescription={description}
+            cardMainLinkLabel={name}
+            cardMainLinkPath={{ pathname: `/apps/${id}` }}
+            cardId={id}
+            cardTrack={productId}
+            cardDescription={description || t('applications|No description provided')}
           >
             <MoreMenu
               options={[
                 {
                   label: t('frequent|Edit'),
-                  action: updateApplication,
+                  action: () => props.onUpdate(id),
                 },
                 {
                   label: t('frequent|Delete'),
-                  action: deleteApplication,
+                  action: () => {
+                    window.confirm(
+                      t('applications|Are you sure you want to delete this application?')
+                    )
+                      ? applicationsStore().deleteApplication(id)
+                      : null;
+                  },
                 },
               ]}
             />
@@ -74,7 +71,9 @@ function Item(props: {
               <Box mt={2}>
                 <CardFeatureLabel>{t('applications|INSTANCES')}</CardFeatureLabel>
                 <CardLabel>
-                  <Typography variant="h5">{instances}</Typography>
+                  <Typography variant="h5">
+                    {numberOfInstances || t('applications|None')}
+                  </Typography>
                   <Box display="flex" my={1}>
                     <ScheduleIcon color="disabled" />
                     <Box pl={1} color="text.disabled">
@@ -95,11 +94,7 @@ function Item(props: {
                     {groups.length === 0 ? t('applications|None') : groups.length}
                   </CardLabel>
                 </Box>
-                <GroupsList
-                  groups={groups}
-                  appID={props.application.id}
-                  appName={props.application.name}
-                />
+                <ApplicationItemGroupsList groups={groups} appID={id} appName={name} />
               </Box>
             </Grid>
           </Grid>
@@ -108,5 +103,3 @@ function Item(props: {
     </ListItem>
   );
 }
-
-export default Item;
