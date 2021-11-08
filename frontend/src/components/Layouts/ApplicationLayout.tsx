@@ -6,7 +6,7 @@ import _ from 'underscore';
 import { applicationsStore } from '../../stores/Stores';
 import ChannelList from '../Channels/ChannelList';
 import SectionHeader from '../Common/SectionHeader';
-import GroupsList from '../Groups/List';
+import GroupsList from '../Groups/GroupList';
 import PackagesList from '../Packages/List';
 
 function ApplicationLayout() {
