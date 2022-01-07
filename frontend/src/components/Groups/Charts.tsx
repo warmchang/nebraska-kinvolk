@@ -11,14 +11,9 @@ import { Area, AreaChart, AreaProps, CartesianGrid, Tooltip, XAxis, YAxis } from
 import semver from 'semver';
 import _ from 'underscore';
 import { Group } from '../../api/apiDataTypes';
+import { getMinuteDifference, makeLocaleTime } from '../../i18n/dateTime';
 import { groupChartStore } from '../../stores/Stores';
-import {
-  cleanSemverVersion,
-  getInstanceStatus,
-  getMinuteDifference,
-  makeColorsForVersions,
-  makeLocaleTime,
-} from '../../utils/helpers';
+import { cleanSemverVersion, getInstanceStatus, makeColorsForVersions } from '../../utils/helpers';
 import Loader from '../Common/Loader';
 import SimpleTable from '../Common/SimpleTable';
 import makeStatusDefs from '../Instances/StatusDefs';
