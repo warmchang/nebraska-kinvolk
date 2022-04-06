@@ -10,7 +10,7 @@ import (
 
 	"github.com/doug-martin/goqu/v9"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/guregu/null.v4"
 )
 
@@ -634,6 +634,27 @@ func durationParamToPostgresTimings(duration durationParam) (postgresDuration, p
 	return durationCodeToPostgresTimings(code)
 }
 
+// isNightlyVersion returns if a version is nightly or not
+func isNightlyVersion(version string) bool {
+	return strings.Contains(version, "nightly")
+}
+
+func updateVersionTimeline(timeline map[time.Time]VersionCountMap, spans []time.Time, from time.Time, to time.Time, version string) {
+	if isNightlyVersion(version) {
+		return
+	}
+
+	for _, span := range spans {
+		if span.After(from) && span.Before(to) {
+			timeline[span][version]++
+		} else {
+			if _, ok := timeline[span][version]; !ok {
+				timeline[span][version] = 0
+			}
+		}
+	}
+}
+
 func (api *API) GetGroupVersionCountTimeline(groupID string, duration string) (map[time.Time](VersionCountMap), bool, error) {
 	cacheKey := groupDurationCacheKey{GroupID: groupID, Duration: duration}
 
@@ -648,81 +669,108 @@ func (api *API) GetGroupVersionCountTimeline(groupID string, duration string) (m
 		logger.Debug().Str("cacheStatus", "STALE").Str("groupID", groupID).Str("duration", duration).Msg("GetGroupVersionCountTimeline")
 	}
 
-	var timelineEntry []VersionCountTimelineEntry
 	durationString, interval, err := durationParamToPostgresTimings(durationParam(duration))
-	// Get the number of instances per version until each of the time-interval
-	// divisions. This is done only for the instances that pinged the server in
-	// the last time-interval.
 	if err != nil {
 		return nil, false, err
 	}
 
-	instanceQuery, _, err := goqu.From("instance_application").Select(goqu.L("array_agg(DISTINCT (\"instance_id\")) \"instance_id\"")).Where(goqu.C("group_id").Eq(groupID),
-		goqu.L(fmt.Sprintf("last_check_for_updates >= now() - interval '%s'", durationString)),
-		goqu.L(ignoreFakeInstanceCondition("instance_id"))).ToSQL()
+	queryWg := new(errgroup.Group)
 
-	if err != nil {
-		return nil, false, err
-	}
-	ids := []string{}
-	err = api.db.QueryRowx(instanceQuery).Scan(pq.Array(&ids))
-	if err != nil {
-		return nil, false, err
-	}
-	values := "VALUES "
-	for _, id := range ids {
-		values = values + fmt.Sprintf("('%s'),", id)
-	}
-	values = strings.TrimRight(values, ",")
-
-	if len(ids) == 0 {
-		values = values + "('')"
-	}
-
-	query := fmt.Sprintf(`
-	WITH time_series AS (SELECT * FROM generate_series(now() - interval '%[1]s', now(), INTERVAL '%[2]s') AS ts),
-		 recent_instances AS (SELECT instance_id, (CASE WHEN last_update_granted_ts 
-			IS NOT NULL THEN last_update_granted_ts ELSE created_ts END), version, 4 status FROM 
-			instance_application WHERE group_id=$1 AND 
-			last_check_for_updates >= now() - interval '%[1]s' AND %[3]s ORDER BY last_update_granted_ts DESC),
-		 instance_versions AS (SELECT instance_id, created_ts, version, status 
-			FROM instance_status_history WHERE instance_id = ANY (%[5]s) 
-			AND status = 4 AND created_ts >= now() - interval '%[6]s' UNION (SELECT * FROM recent_instances) ORDER BY created_ts DESC)
-	SELECT ts, (CASE WHEN version IS NULL THEN '' ELSE version END), 
-	  sum(CASE WHEN version IS NOT null THEN 1 ELSE 0 END) total 
-	FROM (SELECT * FROM time_series 
-		LEFT JOIN (SELECT distinct ON (instance_id) instance_Id, version, 
-		  created_ts FROM instance_versions WHERE %[4]s ORDER BY instance_Id, 
-		  created_ts DESC) _ 
-		ON created_ts <= time_series.ts) AS _
-	GROUP BY 1,2
-	ORDER BY ts DESC;
-	`, durationString, interval, ignoreFakeInstanceCondition("instance_id"),
-		ignoreFakeInstanceCondition("instance_Id"), values, deadInstanceTimeSpan)
-
-	rows, err := api.db.Queryx(query, groupID)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var timelineEntryEntity VersionCountTimelineEntry
-		err := rows.StructScan(&timelineEntryEntity)
-		if err != nil {
-			return nil, false, err
-		}
-		timelineEntry = append(timelineEntry, timelineEntryEntity)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	allVersions := make(map[string]struct{})
 	timelineCount := make(map[time.Time]VersionCountMap)
 
-	// Create the timeline map, and gather all the versions found.
-	for _, entry := range timelineEntry {
+	timelineEntryEntities := []VersionCountTimelineEntry{}
+
+	queryWg.Go(func() error {
+		// active instance without instance_status_history status as 4
+
+		instancesWithoutStatusQuery := fmt.Sprintf(`
+		with time_series as ( select * from generate_series( now() - interval '%[2]s', now(), interval '%[3]s' ) as ts ), instances as ( select ia.instance_id, case when last_update_granted_ts is not null then last_update_granted_ts else ia.created_ts end, ia."version" from instance_application ia left join ( select * from instance_status_history where group_id = '%[1]s' and created_ts >= now() - interval '%[4]s' and status = 4 ) ish on ia.instance_id = ish.instance_id where (ia."group_id" = '%[1]s') and last_check_for_updates >= now() - interval '%[2]s' and ( ia.instance_id is null or ia.instance_id not like '{________-____-____-____-____________}' ) and ia.version not like '%%nightly%%' and ish.instance_id is null ) select ts, ( case when version is null then '' else version end ), sum( case when version is not null then 1 else 0 end ) total from ( select * from time_series left join ( select * from instances ) _ on created_ts <= time_series.ts ) as _ group by 1, 2 order by ts desc;
+		`, groupID, durationString, interval, deadInstanceTimeSpan)
+
+		rows, err := api.db.Queryx(instancesWithoutStatusQuery)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var timelineEntryEntity VersionCountTimelineEntry
+			if err := rows.StructScan(&timelineEntryEntity); err != nil {
+				return err
+			}
+			timelineEntryEntities = append(timelineEntryEntities, timelineEntryEntity)
+		}
+
+		return nil
+	})
+
+	instanceWithStatusInInterval := []InstanceStatusHistoryEntry{}
+	queryWg.Go(func() error {
+		// active instances with instance_status_history in the interval
+
+		instanceWithStatusHistoryInInterval := fmt.Sprintf(`
+			select * from instance_status_history ish inner join (select instance_id from instance_application where ( "group_id" = '%[1]s' ) AND last_check_for_updates >= now() - interval '%[2]s' AND ( instance_id IS NULL OR instance_id NOT LIKE '{________-____-____-____-____________}')) ia on ish.instance_id = ia.instance_id  where ish.group_id = '%[1]s' and ish.status=4 and ish.created_ts >= now()-interval '%[2]s' order by ish.instance_id,ish.created_ts desc;
+			`, groupID, durationString)
+
+		statusHistoryRows, err := api.db.Queryx(instanceWithStatusHistoryInInterval)
+		if err != nil {
+			return err
+		}
+		defer statusHistoryRows.Close()
+
+		for statusHistoryRows.Next() {
+			rI := InstanceStatusHistoryEntry{}
+			if err := statusHistoryRows.StructScan(&rI); err != nil {
+				return err
+			}
+			instanceWithStatusInInterval = append(instanceWithStatusInInterval, rI)
+		}
+		return nil
+	})
+
+	type versionCount struct {
+		Version string `db:"version"`
+		Count   int    `db:"count"`
+	}
+
+	versionCounts := []versionCount{}
+	queryWg.Go(func() error {
+		// grouped version count for active instances that don't have instance_status_history in the interval
+		instancesWithoutStatusInIntervalQuery := fmt.Sprintf(
+			`with active_instance as (select instance_id from instance_application where group_id = '%[1]s' and last_check_for_updates >= now() - interval '%[2]s'  and( instance_id IS NULL OR instance_id NOT LIKE '{________-____-____-____-____________}')) ,
+			instance_status_interval as (select distinct instance_id from instance_status_history where instance_id in (select instance_id from active_instance) and status = 4 and created_ts >= now()-interval '%[2]s'),
+			instance_status_to_process as (select ai.instance_id from active_instance ai left join instance_status_interval isi  on ai.instance_id = isi.instance_id where isi.instance_id is null)
+			select version as version, count(*) as count from (select distinct on (instance_id) instance_id,id,status,version,created_ts,application_id,group_id from instance_status_history where instance_id in (select instance_id from instance_status_to_process) and status=4 and created_ts >= now()-interval '%[3]s' order by instance_id,created_ts desc)_ group by version;`,
+			groupID, durationString, deadInstanceTimeSpan)
+
+		versionAggRows, err := api.db.Queryx(instancesWithoutStatusInIntervalQuery)
+		if err != nil {
+			return err
+		}
+
+		for versionAggRows.Next() {
+			vc := versionCount{}
+			err = versionAggRows.StructScan(&vc)
+			if err != nil {
+				return err
+			}
+			versionCounts = append(versionCounts, vc)
+		}
+
+		return nil
+	})
+
+	err = queryWg.Wait()
+	if err != nil {
+		return nil, false, err
+	}
+
+	allVersions := make(map[string]struct{})
+	spans := []time.Time{}
+	// post query processing for instances without status history
+	for _, entry := range timelineEntryEntities {
 		value, ok := timelineCount[entry.Time]
 		if !ok {
+			spans = append(spans, entry.Time)
 			value = make(VersionCountMap)
 			timelineCount[entry.Time] = value
 		}
@@ -749,6 +797,40 @@ func (api *API) GetGroupVersionCountTimeline(groupID string, duration string) (m
 		for timestamp := range timelineCount {
 			if _, ok := timelineCount[timestamp][version]; !ok {
 				timelineCount[timestamp][version] = 0
+			}
+		}
+	}
+
+	// post query processing for active instances with instance_status_history in the interval
+	latestHistoryTime := time.Now()
+	prevInstanceID := ""
+	for _, instanceStatusHistory := range instanceWithStatusInInterval {
+		for _, span := range spans {
+			if prevInstanceID == "" {
+				prevInstanceID = instanceStatusHistory.InstanceID
+			}
+			if prevInstanceID != instanceStatusHistory.InstanceID {
+				prevInstanceID = instanceStatusHistory.InstanceID
+				latestHistoryTime = time.Now()
+			}
+			if instanceStatusHistory.CreatedTs.After(span) {
+				updateVersionTimeline(timelineCount, spans, instanceStatusHistory.CreatedTs, latestHistoryTime, instanceStatusHistory.Version)
+				latestHistoryTime = instanceStatusHistory.CreatedTs
+			}
+		}
+	}
+
+	// post query processing for active instances without instance_status_history in the interval
+	for _, vc := range versionCounts {
+		if isNightlyVersion(vc.Version) {
+			continue
+		}
+		for _, span := range spans {
+			_, ok := timelineCount[span][vc.Version]
+			if ok {
+				timelineCount[span][vc.Version] += uint64(vc.Count)
+			} else {
+				timelineCount[span][vc.Version] = uint64(vc.Count)
 			}
 		}
 	}
