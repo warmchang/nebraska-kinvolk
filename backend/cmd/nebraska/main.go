@@ -77,10 +77,10 @@ func main() {
 	}
 
 	// setup admin service (injected into syncer and the HTTP handlers)
-	adminSvc := admin.NewService(db.Reads())
+	adminSvc := admin.NewService(db.Conn(), db.Reads())
 
 	// setup runtime service (injected into the HTTP handlers and the stats job)
-	runtimeSvc := runtime.NewService(db.Reads(), runtime.Config{})
+	runtimeSvc := runtime.NewService(db.Conn(), db.Reads(), runtime.Config{})
 
 	// setup syncer
 	if conf.EnableSyncer {

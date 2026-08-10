@@ -19,14 +19,14 @@ const flatcarAppID = types.FlatcarAppID
 // adminSvc returns an admin.Service that reuses a's shared read queries so
 // tests can exercise admin write operations (which moved to package admin).
 func adminSvc(a *API) *admin.Service {
-	return admin.NewService(a.Reads())
+	return admin.NewService(a.Conn(), a.Reads())
 }
 
 // runtimeSvc returns a runtime.Service that reuses a's shared read queries so
 // tests can exercise the runtime operations (which moved to package
 // runtime).
 func runtimeSvc(a *API) *runtime.Service {
-	return runtime.NewService(a.Reads(), runtime.Config{DisableUpdatesOnFailedRollout: true})
+	return runtime.NewService(a.Conn(), a.Reads(), runtime.Config{DisableUpdatesOnFailedRollout: true})
 }
 
 // Test helper functions to reduce boilerplate in floor tests

@@ -24,11 +24,11 @@ func newForTest(t *testing.T) *api.API {
 // runtime tests can build the domain fixtures (teams, apps, channels, groups)
 // that only the admin write surface can create.
 func adminSvc(a *api.API) *admin.Service {
-	return admin.NewService(a.Reads())
+	return admin.NewService(a.Conn(), a.Reads())
 }
 
 // runtimeSvc returns a runtime.Service that reuses a's shared read queries so
 // tests can exercise the runtime operations under test.
 func runtimeSvc(a *api.API) *Service {
-	return NewService(a.Reads(), Config{DisableUpdatesOnFailedRollout: true})
+	return NewService(a.Conn(), a.Reads(), Config{DisableUpdatesOnFailedRollout: true})
 }

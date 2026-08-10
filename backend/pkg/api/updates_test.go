@@ -479,7 +479,7 @@ func TestAlreadyGrantedWithoutLastUpdateVersion(t *testing.T) {
 	assert.Equal(t, "2000.0.0", instance.Application.LastUpdateVersion.String)
 
 	// Simulate old instance: clear LastUpdateVersion but keep UpdateGranted status
-	_, err = a.db.Exec(`UPDATE instance_application SET last_update_version = NULL
+	_, err = a.db().Exec(`UPDATE instance_application SET last_update_version = NULL
 		WHERE instance_id = $1 AND application_id = $2`, instanceID, setup.AppID)
 	assert.NoError(t, err)
 

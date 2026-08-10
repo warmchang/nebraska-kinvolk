@@ -57,7 +57,7 @@ func TestMigrateDown(t *testing.T) {
 	require.NoError(t, err)
 
 	var migrations []migration
-	rows, err := db.db.Queryx(query)
+	rows, err := db.db().Queryx(query)
 	require.NoError(t, err)
 
 	defer rows.Close()
