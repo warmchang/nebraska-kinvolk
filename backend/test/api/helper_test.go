@@ -21,13 +21,13 @@ import (
 // adminSvc returns an admin.Service that reuses db's shared read queries so
 // tests can construct a server with admin write support.
 func adminSvc(db *api.API) *admin.Service {
-	return admin.NewService(db.Reads())
+	return admin.NewService(db.Conn(), db.Reads())
 }
 
 // runtimeSvc returns a runtime.Service that reuses db's shared read queries so
 // tests can construct a server with the runtime service.
 func runtimeSvc(db *api.API) *runtime.Service {
-	return runtime.NewService(db.Reads(), runtime.Config{})
+	return runtime.NewService(db.Conn(), db.Reads(), runtime.Config{})
 }
 
 // newDBForTest is a helper function that
