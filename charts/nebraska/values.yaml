@@ -42,10 +42,6 @@ config:
         - ReadWriteOnce
       size: 10Gi
 
-  # Path to a PEM-encoded CA certificate file to trust for TLS verification
-  # (additive to system CAs, supports multiple certs in one file)
-  caFile:
-
   auth:
     mode: noop
     oidc:
@@ -58,7 +54,10 @@ config:
       viewerRoles:
       rolesPath:
       scopes:
+      # Required API/resource audience expected in OIDC access tokens.
       audience:
+      # Disable access-token audience validation. Insecure; migration only.
+      skipAudienceCheck: false
       # Use OIDC UserInfo endpoint for role extraction (for providers that don't include roles in access token)
       useUserInfo: false
     github:
